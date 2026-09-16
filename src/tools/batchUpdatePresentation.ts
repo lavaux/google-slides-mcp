@@ -1,4 +1,5 @@
 import { BatchUpdatePresentationArgsSchema, type BatchUpdatePresentationArgs } from '../schemas.js';
+import type { GoogleClients } from '../google/clients.js';
 import type { ToolModule } from '../utils/tool.js';
 import type { slides_v1 } from 'googleapis';
 
@@ -16,7 +17,7 @@ const toWriteControl = (value: unknown): slides_v1.Schema$WriteControl | undefin
   return { ...value };
 };
 
-const handler = async (slides: slides_v1.Slides, args: BatchUpdatePresentationArgs): Promise<unknown> => {
+const handler = async ({ slides }: GoogleClients, args: BatchUpdatePresentationArgs): Promise<unknown> => {
   const response = await slides.presentations.batchUpdate({
     presentationId: args.presentationId,
     requestBody: {

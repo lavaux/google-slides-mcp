@@ -1,8 +1,8 @@
 import { CreatePresentationArgsSchema, type CreatePresentationArgs } from '../schemas.js';
+import type { GoogleClients } from '../google/clients.js';
 import type { ToolModule } from '../utils/tool.js';
-import type { slides_v1 } from 'googleapis';
 
-const handler = async (slides: slides_v1.Slides, args: CreatePresentationArgs): Promise<unknown> => {
+const handler = async ({ slides }: GoogleClients, args: CreatePresentationArgs): Promise<unknown> => {
   const response = await slides.presentations.create({
     requestBody: {
       title: args.title,

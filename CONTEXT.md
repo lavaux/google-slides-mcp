@@ -20,6 +20,26 @@ _Avoid_: toolFn, executor, implementation
 A Google Slides API mutation object. This server does not model its shape.
 _Avoid_: request body, patch
 
+**Image source**:
+Where a tool gets image bytes or a URL. One of a local path, base64 bytes, a public URL, or a Drive file id. Exactly one per call.
+_Avoid_: input, image data, payload
+
+**Staged image**:
+An image this process uploaded to Drive, shared link-readable, and deleted once Slides had copied it. Only local bytes are staged. A public URL is not.
+_Avoid_: temp file, cached image, hosted image
+
+**URL form**:
+One candidate public URL shape for a Drive file. This process probes the forms in fidelity order and reports which one served the bytes.
+_Avoid_: link, direct link, share link
+
+**Thumbnail**:
+A slide rendered to PNG by the Slides API and returned inline. Its Google URL is short-lived and identity-tagged, so this process never surfaces it.
+_Avoid_: preview, screenshot, render
+
+**Granted scopes**:
+The scopes Google reported at consent, stored with the Google credential. A stored grant that no longer covers what this process needs forces one fresh consent.
+_Avoid_: permissions, access, entitlements
+
 **Transport**:
 The channel between this process and the host. This server uses stdio only.
 _Avoid_: connection, socket, stream

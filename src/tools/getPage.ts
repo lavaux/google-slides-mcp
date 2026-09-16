@@ -1,8 +1,8 @@
 import { GetPageArgsSchema, type GetPageArgs } from '../schemas.js';
+import type { GoogleClients } from '../google/clients.js';
 import type { ToolModule } from '../utils/tool.js';
-import type { slides_v1 } from 'googleapis';
 
-const handler = async (slides: slides_v1.Slides, args: GetPageArgs): Promise<unknown> => {
+const handler = async ({ slides }: GoogleClients, args: GetPageArgs): Promise<unknown> => {
   const response = await slides.presentations.pages.get({
     presentationId: args.presentationId,
     pageObjectId: args.pageObjectId,

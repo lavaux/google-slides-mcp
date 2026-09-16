@@ -10,7 +10,13 @@ const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_FOUND = 302;
 const STATE_BYTES = 16;
-const SCOPES = ['https://www.googleapis.com/auth/presentations', 'https://www.googleapis.com/auth/drive.readonly'];
+export const SCOPES = [
+  'https://www.googleapis.com/auth/presentations',
+  // Uploads the staged images that createImage must fetch from a public URL.
+  'https://www.googleapis.com/auth/drive.file',
+  // Reads images that already live in the user's Drive.
+  'https://www.googleapis.com/auth/drive.readonly',
+];
 
 type ConsentClient = {
   clientId: string;
@@ -75,13 +81,20 @@ const googleAuthorizeUrl = (client: ConsentClient, redirectUri: string, state: s
     state,
   });
 
-const exchangeGoogleCode = async (client: ConsentClient, redirectUri: string, code: string): Promise<string> => {
+type GrantedTokens = {
+  refreshToken: string;
+  scopes: string[];
+};
+
+const exchangeGoogleCode = async (client: ConsentClient, redirectUri: string, code: string): Promise<GrantedTokens> => {
   const oauth = new google.auth.OAuth2(client.clientId, client.clientSecret, redirectUri);
   const { tokens } = await oauth.getToken(code);
   if (!tokens.refresh_token) {
     throw new Error('Google did not return a refresh token. Retry consent.');
   }
-  return tokens.refresh_token;
+  // Google reports what it actually granted, which may be narrower than what
+  // was asked for. Recording it lets a later start detect a stale grant.
+  return { refreshToken: tokens.refresh_token, scopes: tokens.scope?.split(' ') ?? [] };
 };
 
 const newSession = (client: ConsentClient): ConsentSession => ({
@@ -128,9 +141,14 @@ const handleCallback = async (url: URL, res: ServerResponse, run: ConsentRun): P
     sendHtml(res, HTTP_BAD_REQUEST, errorPage('Google did not return a code.'));
     return;
   }
-  const refreshToken = await exchangeGoogleCode(session, callbackUri(run.origin), code);
+  const granted = await exchangeGoogleCode(session, callbackUri(run.origin), code);
   sendHtml(res, HTTP_OK, successPage());
-  run.finish({ clientId: session.clientId, clientSecret: session.clientSecret, refreshToken });
+  run.finish({
+    clientId: session.clientId,
+    clientSecret: session.clientSecret,
+    refreshToken: granted.refreshToken,
+    scopes: granted.scopes,
+  });
 };
 
 const closeServer =

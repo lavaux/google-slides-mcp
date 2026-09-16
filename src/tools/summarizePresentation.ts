@@ -1,4 +1,5 @@
 import { SummarizePresentationArgsSchema, type SummarizePresentationArgs } from '../schemas.js';
+import type { GoogleClients } from '../google/clients.js';
 import type { ToolModule } from '../utils/tool.js';
 import type { slides_v1 } from 'googleapis';
 
@@ -52,7 +53,7 @@ const buildSummary = (presentation: slides_v1.Schema$Presentation, includeNotes:
   };
 };
 
-const handler = async (slides: slides_v1.Slides, args: SummarizePresentationArgs): Promise<unknown> => {
+const handler = async ({ slides }: GoogleClients, args: SummarizePresentationArgs): Promise<unknown> => {
   const presentation = (
     await slides.presentations.get({
       presentationId: args.presentationId,
