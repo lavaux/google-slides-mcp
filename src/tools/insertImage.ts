@@ -60,10 +60,12 @@ const thumbnailWarning = (urlForm: string): { warning?: string } =>
  * omitted width or height cannot distort the picture.
  */
 const handler = async (clients: GoogleClients, args: InsertImageArgs): Promise<unknown> => {
-  const pageSize = await pageSizeOf(clients.slides, args.presentationId);
-  const box = resolveBox(args, pageSize);
+  // The image is resolved first: its pixel dimensions decide the frame when the
+  // caller gave only one of width or height.
   const image = await resolveImageSource(clients, args);
   try {
+    const pageSize = await pageSizeOf(clients.slides, args.presentationId);
+    const box = resolveBox(args, pageSize, image.natural);
     const response = await clients.slides.presentations.batchUpdate({
       presentationId: args.presentationId,
       requestBody: { requests: buildRequests(args, image.url, box) },

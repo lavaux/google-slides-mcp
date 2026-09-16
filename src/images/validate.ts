@@ -31,6 +31,9 @@ const U32 = Uint32Array.BYTES_PER_ELEMENT;
 export type ImageFormat = {
   mimeType: string;
   extension: string;
+  /** Pixel size, when the header could be parsed. */
+  width?: number;
+  height?: number;
 };
 
 // Compared as hex so the byte signatures stay readable and carry no bare numbers.
@@ -158,5 +161,5 @@ export const validateImageBytes = (bytes: Buffer): ImageFormat => {
   if (dimensions && dimensions.width * dimensions.height > MAX_PIXELS) {
     throw new Error(megapixelError(dimensions));
   }
-  return format;
+  return { ...format, ...dimensions };
 };
