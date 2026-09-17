@@ -113,6 +113,10 @@ The process listens on stdio. Stderr prints `Google Slides MCP server running an
     - `pageObjectId` (string, required): The object ID of the page (slide) to retrieve.
   - **Output:** JSON object representing the page details.
 
+- **`list_page_elements`**: Lists the object ids on each slide. This is how you find the id the styling tools need.
+  - **Input:** `presentationId`, optional `pageObjectId` for one slide, optional `kind` to keep only `shape`, `image`, `video`, `line`, `table`, `group`, `sheetsChart` or `wordArt`.
+  - **Output:** `pageSize` and, per slide, each element's `objectId`, `kind`, `x`, `y`, `width`, `height` in points, its `shapeType` and `placeholder` when it has them, `rows` and `columns` for tables, and an 80-character text preview. Group members are listed too, each carrying the `groupObjectId` of the group it belongs to.
+
 - **`insert_image`**: Inserts an image onto a slide.
   - **Input:**
     - `presentationId` (string, required)
@@ -140,6 +144,18 @@ The process listens on stdio. Stderr prints `Google Slides MCP server running an
 - **`set_element_text`**: Replaces all text in a shape, placeholder, or table cell.
   - **Input:** `presentationId`, `objectId`, `text`, and `rowIndex` plus `columnIndex` together to target a table cell.
 
+- **`set_shape_properties`**: Changes a shape or placeholder: text fitting, fill, outline, vertical alignment, hyperlink.
+  - **Input:** `presentationId`, `objectId`, and any of `autofit` (only `NONE` is accepted by Google; see below), `contentAlignment` (`TOP`, `MIDDLE`, `BOTTOM`), `backgroundColor`, `outlineColor`, `outlineWeight` (points), `outlineDashStyle`, `linkUrl`.
+  - **Output:** `objectId`, `changed`, and the field masks that were sent.
+
+- **`set_text_style`**: Styles the text of a shape, placeholder or table cell.
+  - **Input:** `presentationId`, `objectId`, optional `rowIndex` plus `columnIndex` for a table cell, optional `startIndex` and `endIndex` to style part of the text, and any of `fontFamily`, `fontSize`, `bold`, `italic`, `underline`, `strikethrough`, `smallCaps`, `baselineOffset`, `foregroundColor`, `backgroundColor`, `linkUrl`, `alignment`, `direction`, `spacingMode`, `lineSpacing`, `spaceAbove`, `spaceBelow`, `indentStart`, `indentEnd`, `indentFirstLine`, `autofit`.
+  - Sizes, spacing and indents are in points. `lineSpacing` is a percentage where 100 is normal.
+
+- **`set_element_geometry`**: Moves or resizes a page element.
+  - **Input:** `presentationId`, `objectId`, and any of `x`, `y`, `width`, `height` in points. Omitted values are kept.
+  - **Output:** the resulting box in points.
+
 - **`replace_all_text`**: Finds and replaces text across a presentation.
   - **Input:** `presentationId`, `text`, `replaceText`, optional `matchCase`, `searchByRegex`, `pageObjectIds`.
   - **Output:** `occurrencesChanged`.
@@ -157,6 +173,49 @@ The process listens on stdio. Stderr prints `Google Slides MCP server running an
       - `slideId`: Object ID of the slide
       - `content`: All text extracted from the slide
       - `notes`: Speaker notes (if requested and available)
+
+## How shape styling works
+
+Four facts decide whether a styling call does what you meant.
+
+**A field mask resets what it names.** Every `update*Properties` request carries a
+`fields` mask. Google treats a path named in the mask whose value is unset as "reset
+this property to its default", so a hand-written mask that is one path too wide wipes
+formatting silently. These tools build the mask and the payload from one list, so the
+mask can only ever name a path a value was written at. Pass only the properties you
+want changed; everything else is left alone.
+
+**Only `NONE` can be written to autofit.** Google rejects `TEXT_AUTOFIT` and
+`SHAPE_AUTOFIT` on every shape, placeholder or not, with "Autofit types other than NONE
+are not supported". Shrink-text-on-overflow and resize-shape-to-fit can be chosen in the
+Slides editor, but they cannot be set through the API. Both tools reject them locally
+and say so. What `autofit: 'NONE'` does is real and useful: it turns text fitting off,
+baking the current font scale into the font size so the text stops resizing itself.
+
+To make text fit a box, set `fontSize` or `lineSpacing` with `set_text_style`, or resize
+the box with `set_element_geometry`.
+
+**Autofit is still written last.** Any request that may affect text fitting resets
+`autofitType` to `NONE`, so both tools emit the autofit change as a trailing request of
+its own, and both take an `autofit` argument so it can travel with the change that would
+otherwise clear it.
+
+**Some properties cannot be written.** A shape's `shadow`, and autofit's `fontScale`
+and `lineSpacingReduction`, are read-only in the API. Text has no transparent
+foreground, so `foregroundColor` will not take `NONE`, though the text `backgroundColor`
+and a shape's fill and outline all will. None of this is a limitation of these tools:
+`batch_update_presentation` hits the same walls.
+
+**There is no resize request.** Size is a property of the element's transform, not a
+field you can set. `set_element_geometry` reads the element and rewrites its whole
+transform, scaling each matrix column as a unit so a rotated element keeps its angle.
+Two consequences: `x` and `y` are the anchor Slides stores, which for a rotated element
+is not the top-left of its visible bounding box, and an element inside a group is
+refused, because a group child's position is relative to its group rather than to the
+slide.
+
+Set text before styling it. `set_element_text` deletes and reinserts, which discards the
+character styling the old text carried.
 
 ## How images work
 
