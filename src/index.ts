@@ -8,7 +8,7 @@ import { setupToolHandlers } from './serverHandlers.js';
 const buildServer = (session: GoogleSession): McpServer => {
   const server = new McpServer({
     name: 'google-slides-mcp',
-    version: '0.1.0',
+    version: '0.2.0',
   });
   setupToolHandlers(server, session);
   return server;
