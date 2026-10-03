@@ -122,6 +122,15 @@ export const requireShape = (presentation: slides_v1.Schema$Presentation, object
   return located;
 };
 
+/** Image tools read pixels through contentUrl, which only an image element carries. */
+export const requireImage = (presentation: slides_v1.Schema$Presentation, objectId: string): Located => {
+  const located = requireLocated(presentation, objectId);
+  if (!located.element.image) {
+    throw new Error(`Object id "${objectId}" is ${describeKind(located.kind)}, not an image.`);
+  }
+  return located;
+};
+
 export const requireTextElement = (presentation: slides_v1.Schema$Presentation, objectId: string): Located => {
   const located = requireLocated(presentation, objectId);
   if (!located.element.shape && !located.element.table) {

@@ -107,3 +107,7 @@ _Avoid_: apply layout, change template, which suggest an operation Google does n
 **Backup copy**:
 A full Drive copy of a presentation, taken before edits that cannot be undone, named after the original with the time it was taken.
 _Avoid_: snapshot, version, which Drive's own revision history already means
+
+**Crop box**:
+The region of an image to keep, in the image's own pixels, with the origin at its top-left corner. It is applied to the pixels before they reach Google, because the API cannot crop.
+_Avoid_: fractions or insets, points, which measure the frame and not the image

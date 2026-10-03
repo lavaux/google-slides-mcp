@@ -17,6 +17,8 @@ import { arrangeElements } from '../build/tools/arrangeElements.js';
 import { batchUpdatePresentation } from '../build/tools/batchUpdatePresentation.js';
 import { copyPresentation } from '../build/tools/copyPresentation.js';
 import { createPresentation } from '../build/tools/createPresentation.js';
+import { cropImage } from '../build/tools/cropImage.js';
+import { getImageInfo } from '../build/tools/getImageInfo.js';
 import { getPageThumbnail } from '../build/tools/getPageThumbnail.js';
 import { insertImage } from '../build/tools/insertImage.js';
 import { listLayouts } from '../build/tools/listLayouts.js';
@@ -509,6 +511,88 @@ await step('set_theme_colors ACCENT1, read back through list_layouts', async () 
   if (after.masters[0].themeColors.ACCENT1 !== '#FF6600')
     throw new Error(`ACCENT1 is ${after.masters[0].themeColors.ACCENT1}`);
 });
+
+// ---- cropping -------------------------------------------------------------------
+
+await step('get_image_info on a local file, no deck needed', async () => {
+  const info = await getImageInfo.handler(clients, { imagePath });
+  console.log(`    ${info.format} ${info.width}x${info.height}, ${info.frames} frame(s)`);
+});
+
+if (imageId) {
+  await step('crop_image keeps the left half in place and shrinks the frame', async () => {
+    const before = await getImageInfo.handler(clients, { presentationId, imageObjectId: imageId });
+    const half = Math.floor(before.width / 2);
+    const out = await cropImage.handler(clients, {
+      presentationId,
+      imageObjectId: imageId,
+      crop: { x: 0, y: 0, width: half, height: before.height },
+    });
+    const after = await getImageInfo.handler(clients, { presentationId, imageObjectId: imageId });
+    console.log(
+      `    ${before.width}x${before.height} -> ${after.width}x${after.height}, editorCrop=${after.editorCrop}`
+    );
+    if (after.width !== half || after.height !== before.height)
+      throw new Error('contentUrl does not show the cropped pixels');
+    if (Math.abs(after.frame.x - before.frame.x) > 0.5)
+      throw new Error(`frame moved: ${before.frame.x} -> ${after.frame.x}`);
+    const expected = (before.frame.width * half) / before.width;
+    if (Math.abs(after.frame.width - expected) > 0.5)
+      throw new Error(`frame width ${after.frame.width}, wanted ${expected}`);
+    if (Math.abs(out.frame.width - after.frame.width) > 0.5) throw new Error('reported frame disagrees with the deck');
+  });
+
+  await expectFailure('crop_image refuses a box past the image', () =>
+    cropImage.handler(clients, {
+      presentationId,
+      imageObjectId: imageId,
+      crop: { x: 0, y: 0, width: 100000, height: 1 },
+    })
+  );
+}
+
+const croppedInsert = await step('insert_image with a crop from a local file', async () => {
+  const out = await insertImage.handler(clients, {
+    presentationId,
+    pageObjectId: slide.slideObjectId,
+    imagePath,
+    crop: { x: 0, y: 0, width: 32, height: 24 },
+    x: 600,
+    y: 20,
+    width: 80,
+  });
+  const info = await getImageInfo.handler(clients, { presentationId, imageObjectId: out.objectId });
+  if (info.width !== 32 || info.height !== 24) throw new Error(`inserted ${info.width}x${info.height}`);
+  return out;
+});
+
+await step('insert_image with a crop from a public URL (staged, not passed through)', async () => {
+  const out = await insertImage.handler(clients, {
+    presentationId,
+    pageObjectId: slide.slideObjectId,
+    imageUrl: 'https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png',
+    crop: { x: 0, y: 0, width: 200, height: 184 },
+    x: 600,
+    y: 120,
+    width: 80,
+  });
+  if (!out.staged) throw new Error('a cropped URL should have been staged');
+  const info = await getImageInfo.handler(clients, { presentationId, imageObjectId: out.objectId });
+  if (info.width !== 200 || info.height !== 184) throw new Error(`inserted ${info.width}x${info.height}`);
+});
+
+if (croppedInsert) {
+  await step('replace_image with a crop', async () => {
+    await replaceImage.handler(clients, {
+      presentationId,
+      imageObjectId: croppedInsert.objectId,
+      imagePath,
+      crop: { x: 10, y: 10, width: 20, height: 20 },
+    });
+    const info = await getImageInfo.handler(clients, { presentationId, imageObjectId: croppedInsert.objectId });
+    if (info.width !== 20 || info.height !== 20) throw new Error(`replaced with ${info.width}x${info.height}`);
+  });
+}
 
 const thumb = await step('get_page_thumbnail', () =>
   getPageThumbnail.handler(clients, { presentationId, pageObjectId: slide.slideObjectId })

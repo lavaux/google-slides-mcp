@@ -39,6 +39,14 @@ export const ImageSourceShape = {
   driveFileId: z.string().min(1).optional(),
 };
 
+/** Source pixels, origin top-left. Checked against the image's real size once its bytes are read. */
+export const CropField = z.object({
+  x: z.number().int().nonnegative(),
+  y: z.number().int().nonnegative(),
+  width: z.number().int().positive(),
+  height: z.number().int().positive(),
+});
+
 // Flat mutually exclusive fields rather than a discriminated union, so the
 // generated JSON schema stays simple for hosts that handle oneOf poorly.
 const exactlyOneSource = (value: Record<string, unknown>, ctx: z.RefinementCtx): void => {
@@ -66,6 +74,7 @@ export const InsertImageArgsSchema = z
     height: z.number().positive().optional(),
     objectId: z.string().min(1).optional(),
     altText: z.string().optional(),
+    crop: CropField.optional(),
   })
   .superRefine(exactlyOneSource);
 export type InsertImageArgs = z.infer<typeof InsertImageArgsSchema>;
@@ -76,6 +85,7 @@ export const ReplaceImageArgsSchema = z
     imageObjectId: z.string().min(1, { error: '"imageObjectId" (string) is required.' }),
     ...ImageSourceShape,
     imageReplaceMethod: z.enum(['CENTER_INSIDE', 'CENTER_CROP']).optional(),
+    crop: CropField.optional(),
   })
   .superRefine(exactlyOneSource);
 export type ReplaceImageArgs = z.infer<typeof ReplaceImageArgsSchema>;

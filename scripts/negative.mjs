@@ -3,7 +3,9 @@
 // instead of Google's single opaque error, and that the pure helpers the styling
 // tools are built on produce exactly what they claim. Makes no Google calls.
 import assert from 'node:assert/strict';
+import { checkCropBox, cropBytes, imageInfo } from '../build/images/crop.js';
 import { validateImageBytes } from '../build/images/validate.js';
+import { CropImageArgsSchema, GetImageInfoArgsSchema } from '../build/imageSchemas.js';
 import {
   ArrangeElementsArgsSchema,
   ManageSlidesArgsSchema,
@@ -11,6 +13,7 @@ import {
   SetThemeColorsArgsSchema,
 } from '../build/layoutSchemas.js';
 import {
+  InsertImageArgsSchema,
   ListPageElementsArgsSchema,
   SetElementGeometryArgsSchema,
   SetElementTextArgsSchema,
@@ -18,6 +21,7 @@ import {
   SetTextStyleArgsSchema,
 } from '../build/schemas.js';
 import { alignDeltas, boundingBox, distributeDeltas, unionBox } from '../build/slides/arrange.js';
+import { croppedBox, hasEditorCrop, placeFrame } from '../build/slides/cropFrame.js';
 import { axisScales, points, pointsToEmu, resizeBlocker, resizeTransform } from '../build/slides/geometry.js';
 import { mapPlaceholders, sourcePlaceholders, textRequests } from '../build/slides/relayout.js';
 import {
@@ -177,6 +181,65 @@ const cases = [
         [{ objectId: 't', type: 'TITLE', index: 0 }]
       ),
     '"b" (BODY)',
+  ],
+
+  [
+    'crop missing a field',
+    () => parse(CropImageArgsSchema, { presentationId: 'p', imageObjectId: 'i', crop: { x: 0, y: 0, width: 5 } }),
+    'expected number',
+  ],
+  [
+    'crop of zero width',
+    () =>
+      parse(CropImageArgsSchema, {
+        presentationId: 'p',
+        imageObjectId: 'i',
+        crop: { x: 0, y: 0, width: 0, height: 5 },
+      }),
+    'Too small',
+  ],
+  [
+    'negative crop origin',
+    () =>
+      parse(InsertImageArgsSchema, {
+        presentationId: 'p',
+        pageObjectId: 'g',
+        imagePath: 'a.png',
+        crop: { x: -1, y: 0, width: 5, height: 5 },
+      }),
+    'Too small',
+  ],
+  [
+    'fractional crop',
+    () =>
+      parse(InsertImageArgsSchema, {
+        presentationId: 'p',
+        pageObjectId: 'g',
+        imagePath: 'a.png',
+        crop: { x: 0.5, y: 0, width: 5, height: 5 },
+      }),
+    'expected int',
+  ],
+  ['image info for nothing', () => parse(GetImageInfoArgsSchema, {}), 'exactly one image'],
+  [
+    'image info for two images',
+    () => parse(GetImageInfoArgsSchema, { presentationId: 'p', imageObjectId: 'i', imagePath: 'a.png' }),
+    'got 2',
+  ],
+  [
+    'deck image info without a deck',
+    () => parse(GetImageInfoArgsSchema, { imageObjectId: 'i' }),
+    '"presentationId" is required',
+  ],
+  [
+    'crop past the right edge',
+    () => checkCropBox({ x: 50, y: 0, width: 60, height: 10 }, { width: 100, height: 40 }),
+    'which is 100x40 pixels',
+  ],
+  [
+    'crop past the bottom',
+    () => checkCropBox({ x: 0, y: 30, width: 10, height: 11 }, { width: 100, height: 40 }),
+    'get_image_info',
   ],
 ];
 
@@ -425,11 +488,131 @@ const positives = [
       assert.equal(requests.at(-1), bullets[0], 'bullets go last');
     },
   ],
+  [
+    'cropping to the left half halves the frame and keeps its left edge',
+    () => {
+      const box = croppedBox(
+        {
+          transform: { scaleX: 2, scaleY: 2, shearX: 0, shearY: 0, translateX: 1000, translateY: 500, unit: 'EMU' },
+          intrinsic: { width: 100, height: 50 },
+        },
+        { width: 400, height: 200 },
+        { x: 0, y: 0, width: 200, height: 200 }
+      );
+      assert.deepEqual(box, { width: 100, height: 100, x: 1000, y: 500 });
+    },
+  ],
+  [
+    'cropping off the left moves the frame right by what was removed',
+    () => {
+      const box = croppedBox(
+        {
+          transform: { scaleX: 2, scaleY: 2, translateX: 1000, translateY: 500, unit: 'EMU' },
+          intrinsic: { width: 100, height: 50 },
+        },
+        { width: 400, height: 200 },
+        { x: 100, y: 50, width: 300, height: 150 }
+      );
+      assert.deepEqual(box, { width: 150, height: 75, x: 1050, y: 525 });
+    },
+  ],
+  [
+    'a stretched frame stays stretched after Google refits the pixels',
+    () => {
+      // 200x135 frame over 64x48 pixels: wider than the pixels' own aspect.
+      const before = {
+        transform: { scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, unit: 'EMU' },
+        intrinsic: { width: 200, height: 135 },
+      };
+      const target = croppedBox(before, { width: 64, height: 48 }, { x: 0, y: 0, width: 32, height: 48 });
+      // What replaceImage leaves: pixel-derived intrinsic size, refitted and re-centred.
+      const after = {
+        transform: { scaleX: 2.8125, scaleY: 2.8125, translateX: 5, translateY: 0, unit: 'EMU' },
+        intrinsic: { width: 32, height: 48 },
+      };
+      const t = placeFrame(after, target);
+      near(t.translateX, 0, 'x');
+      near(t.scaleX * 32, 100, 'width');
+      near(t.scaleY * 48, 135, 'height');
+    },
+  ],
+  [
+    'a rotated crop keeps its angle and moves along the rotated axis',
+    () => {
+      const a = Math.PI / 6;
+      const rotated = {
+        scaleX: Math.cos(a),
+        shearX: -Math.sin(a),
+        shearY: Math.sin(a),
+        scaleY: Math.cos(a),
+        translateX: 0,
+        translateY: 0,
+        unit: 'EMU',
+      };
+      const box = croppedBox(
+        { transform: rotated, intrinsic: { width: 100, height: 100 } },
+        { width: 10, height: 10 },
+        { x: 5, y: 0, width: 5, height: 10 }
+      );
+      near(box.x, 50 * Math.cos(a), 'x');
+      near(box.y, 50 * Math.sin(a), 'y');
+      const t = placeFrame({ transform: rotated, intrinsic: { width: 100, height: 100 } }, box);
+      near((Math.atan2(t.shearY, t.scaleX) * 180) / Math.PI, 30, 'angle');
+      near(Math.hypot(t.scaleX, t.shearY) * 100, 50, 'width');
+    },
+  ],
+  [
+    'an editor crop is spotted, an empty one is not',
+    () => {
+      assert.equal(hasEditorCrop({ imageProperties: { cropProperties: { leftOffset: 0.1 } } }), true);
+      assert.equal(hasEditorCrop({ imageProperties: { cropProperties: {} } }), false);
+      assert.equal(hasEditorCrop({}), false);
+    },
+  ],
 ];
 
 for (const [label, check] of positives) {
   try {
     check();
+    console.log(`PASS  ${label}`);
+  } catch (error) {
+    bad += 1;
+    console.log(`FAIL  ${label}: ${error.message}`);
+  }
+}
+
+// sharp runs locally, so the crop itself is checked here too.
+const sharp = (await import('sharp')).default;
+const asyncPositives = [
+  [
+    'cropping a PNG keeps PNG and returns the box size',
+    async () => {
+      const png = await sharp({ create: { width: 40, height: 30, channels: 4, background: '#336699' } })
+        .png()
+        .toBuffer();
+      const out = await cropBytes(png, { x: 5, y: 5, width: 20, height: 10 });
+      const info = await imageInfo(out);
+      assert.deepEqual([info.format, info.width, info.height], ['png', 20, 10]);
+    },
+  ],
+  [
+    'cropping an animated GIF crops every frame',
+    async () => {
+      // Frames must differ, or the encoder merges identical ones into one.
+      const raw = Buffer.alloc(20 * 30 * 3);
+      raw.forEach((_, i) => (raw[i] = i % 3 === Math.floor(i / 600) ? 255 : 0));
+      const gif = await sharp(raw, { raw: { width: 20, height: 30, channels: 3, pageHeight: 10 } })
+        .gif()
+        .toBuffer();
+      const info = await imageInfo(await cropBytes(gif, { x: 2, y: 1, width: 8, height: 5 }));
+      assert.deepEqual([info.format, info.width, info.height, info.frames], ['gif', 8, 5, 3]);
+    },
+  ],
+];
+
+for (const [label, check] of asyncPositives) {
+  try {
+    await check();
     console.log(`PASS  ${label}`);
   } catch (error) {
     bad += 1;

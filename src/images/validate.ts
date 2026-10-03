@@ -1,4 +1,4 @@
-const MAX_BYTES = 52428800;
+export const MAX_BYTES = 52428800;
 const MAX_PIXELS = 25000000;
 const BYTES_PER_MB = 1048576;
 const HEX_CHARS_PER_BYTE = 2;

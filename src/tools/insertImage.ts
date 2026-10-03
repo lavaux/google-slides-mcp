@@ -62,7 +62,7 @@ const thumbnailWarning = (urlForm: string): { warning?: string } =>
 const handler = async (clients: GoogleClients, args: InsertImageArgs): Promise<unknown> => {
   // The image is resolved first: its pixel dimensions decide the frame when the
   // caller gave only one of width or height.
-  const image = await resolveImageSource(clients, args);
+  const image = await resolveImageSource(clients, args, args.crop);
   try {
     const pageSize = await pageSizeOf(clients.slides, args.presentationId);
     const box = resolveBox(args, pageSize, image.natural);
@@ -95,6 +95,6 @@ export const insertImage: ToolModule<InsertImageArgs> = {
   handler,
   descriptor: {
     description:
-      'Insert an image onto a slide from a local file path, base64 bytes, a public URL, or a Google Drive file id. Position and size are in points; omit them to centre the image on the slide.',
+      'Insert an image onto a slide from a local file path, base64 bytes, a public URL, or a Google Drive file id. Position and size are in points; omit them to centre the image on the slide. Pass crop { x, y, width, height } in source pixels to keep only that region; get_image_info gives the pixel size.',
   },
 };

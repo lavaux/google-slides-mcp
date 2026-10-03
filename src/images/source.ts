@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
+import { cropBytes, type CropBox } from './crop.js';
+import { downloadImageUrl } from './download.js';
 import { downloadDriveFile, probeImage, stageImage, type StagedImage } from './stage.js';
 import { readDimensions, sniffFormat } from './validate.js';
 import type { GoogleClients } from '../google/clients.js';
@@ -73,6 +75,26 @@ const fromUrl = async (url: string): Promise<ResolvedImage> => {
   };
 };
 
+/** The bytes behind any source, for a caller that has to process them locally. */
+export const sourceBytes = async (clients: GoogleClients, source: ImageSource): Promise<Buffer> => {
+  if (source.imageUrl !== undefined) {
+    return downloadImageUrl(source.imageUrl);
+  }
+  if (source.imagePath !== undefined) {
+    return readFile(source.imagePath);
+  }
+  if (source.imageBase64 !== undefined) {
+    return Buffer.from(source.imageBase64, 'base64');
+  }
+  if (source.driveFileId !== undefined) {
+    return downloadDriveFile(clients.drive, source.driveFileId);
+  }
+  throw new Error('No image source was provided.');
+};
+
+const sourceName = (source: ImageSource): string =>
+  source.imagePath === undefined ? stagedName() : basename(source.imagePath);
+
 /**
  * Resolves an image source to a URL Google can fetch.
  *
@@ -81,22 +103,21 @@ const fromUrl = async (url: string): Promise<ResolvedImage> => {
  * A pre-existing Drive file is downloaded and re-staged rather than shared in
  * place: it is private, and `drive.file` cannot change permissions on a file
  * this app did not create.
+ *
+ * A crop is applied to the bytes here, because Google offers no way to request
+ * one. A cropped URL therefore loses its passthrough and is staged like a file.
  */
-export const resolveImageSource = async (clients: GoogleClients, source: ImageSource): Promise<ResolvedImage> => {
+export const resolveImageSource = async (
+  clients: GoogleClients,
+  source: ImageSource,
+  crop?: CropBox
+): Promise<ResolvedImage> => {
+  if (crop !== undefined) {
+    const cropped = await cropBytes(await sourceBytes(clients, source), crop);
+    return fromStaged(await stageImage(clients.drive, cropped, sourceName(source)));
+  }
   if (source.imageUrl !== undefined) {
     return fromUrl(source.imageUrl);
   }
-  if (source.imagePath !== undefined) {
-    const bytes = await readFile(source.imagePath);
-    return fromStaged(await stageImage(clients.drive, bytes, basename(source.imagePath)));
-  }
-  if (source.imageBase64 !== undefined) {
-    const bytes = Buffer.from(source.imageBase64, 'base64');
-    return fromStaged(await stageImage(clients.drive, bytes, stagedName()));
-  }
-  if (source.driveFileId !== undefined) {
-    const bytes = await downloadDriveFile(clients.drive, source.driveFileId);
-    return fromStaged(await stageImage(clients.drive, bytes, stagedName()));
-  }
-  throw new Error('No image source was provided.');
+  return fromStaged(await stageImage(clients.drive, await sourceBytes(clients, source), sourceName(source)));
 };

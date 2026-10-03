@@ -5,6 +5,7 @@ This process is an MCP server for the Google Slides API. A host talks to it on s
 ## Prerequisites
 
 - Node.js 20 or later
+- A platform with a prebuilt `sharp` binary, which `npm install` fetches for image cropping: Linux, macOS or Windows on x64 or arm64
 - A Google Cloud project with the Google Slides API enabled
 - An OAuth Desktop client id and client secret
 
@@ -140,10 +141,19 @@ The process listens on stdio. Stderr prints `Google Slides MCP server running an
       - `driveFileId` (string): An image already in your Drive.
     - `x`, `y`, `width`, `height` (number, optional): Points. Omit to centre the image on the slide.
     - `objectId` (string, optional), `altText` (string, optional)
+    - `crop` (object, optional): `{ x, y, width, height }` in source pixels. Only that region is inserted.
   - **Output:** `objectId`, the `urlForm` that served the image, and whether it was staged.
 
 - **`replace_image`**: Replaces the pixels of an existing image, keeping its object id, position, size, and Z-order. Prefer this over delete-and-reinsert when re-rendering a figure.
-  - **Input:** `presentationId`, `imageObjectId`, one image source as above, optional `imageReplaceMethod` (`CENTER_INSIDE` or `CENTER_CROP`).
+  - **Input:** `presentationId`, `imageObjectId`, one image source as above, optional `imageReplaceMethod` (`CENTER_INSIDE` or `CENTER_CROP`), optional `crop` as for `insert_image`.
+
+- **`get_image_info`**: Reports an image's pixel size, format and frame count. Crop boxes are measured in these pixels.
+  - **Input:** `presentationId` with `imageObjectId` for an image in the deck, or one image source as for `insert_image`.
+  - **Output:** `format`, `width`, `height`, `frames`. For a deck image, also its `frame` on the slide in points and `editorCrop`, which is true when it was cropped in the Slides editor.
+
+- **`crop_image`**: Crops an image already on a slide. The kept pixels stay in place and at the same scale, and the frame shrinks around them.
+  - **Input:** `presentationId`, `imageObjectId`, `crop` (`{ x, y, width, height }` in source pixels).
+  - **Output:** the source and cropped pixel sizes, the new frame in points, and the `urlForm` used for staging.
 
 - **`get_page_thumbnail`**: Renders a slide to PNG and returns it inline, so a rendered layout can be checked visually.
   - **Input:** `presentationId`, `pageObjectId`, optional `size` (`SMALL`, `MEDIUM`, `LARGE`, `WIDTH2000_PX`; defaults to `WIDTH2000_PX`).
@@ -275,5 +285,7 @@ Two consequences worth knowing:
 
 - **The image is briefly public.** Between the permission grant and the delete, anyone holding the link could read it. The window is one API round-trip and the file is then removed. Pass `imageUrl` instead if you would rather this process never touch Drive.
 - **Fidelity can drop.** Drive's direct-link forms were degraded by Google's January 2024 third-party-cookie change, so this process probes several and uses the first that works. The last resort transcodes to JPEG and caps resolution, which loses PNG transparency. The result reports the `urlForm` used and warns when that fallback was hit.
+
+Cropping happens here too, because the API cannot crop an image. A `crop` on `insert_image` or `replace_image`, and every `crop_image` call, cuts the pixels locally with `sharp` and stages the result. A cropped `imageUrl` is therefore downloaded and staged rather than passed straight to Google. `crop_image` swaps the pixels in, then rewrites the frame so the kept region stays exactly where it was. An image cropped earlier in the Slides editor is refused, because that crop cannot be read back or cleared through the API. Reset it in the editor first.
 
 Images must be PNG, JPEG, or GIF, under 50 MB, and at most 25 megapixels. SVG and WebP are not supported. These limits are checked locally, because Google reports every such failure with one message that never says which limit you hit.

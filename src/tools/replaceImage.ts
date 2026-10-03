@@ -4,7 +4,7 @@ import type { GoogleClients } from '../google/clients.js';
 import type { ToolModule } from '../utils/tool.js';
 
 const handler = async (clients: GoogleClients, args: ReplaceImageArgs): Promise<unknown> => {
-  const image = await resolveImageSource(clients, args);
+  const image = await resolveImageSource(clients, args, args.crop);
   try {
     await clients.slides.presentations.batchUpdate({
       presentationId: args.presentationId,
@@ -38,6 +38,6 @@ export const replaceImage: ToolModule<ReplaceImageArgs> = {
   handler,
   descriptor: {
     description:
-      'Replace the pixels of an existing image element while keeping its object id, position, size and Z-order. Prefer this over deleting and re-inserting when re-rendering a chart or figure.',
+      'Replace the pixels of an existing image element while keeping its object id, position, size and Z-order. Prefer this over deleting and re-inserting when re-rendering a chart or figure. Pass crop { x, y, width, height } in source pixels to use only that region of the new image. To crop the image already on the slide, use crop_image.',
   },
 };

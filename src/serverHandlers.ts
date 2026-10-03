@@ -3,6 +3,8 @@ import { arrangeElements } from './tools/arrangeElements.js';
 import { batchUpdatePresentation } from './tools/batchUpdatePresentation.js';
 import { copyPresentation } from './tools/copyPresentation.js';
 import { createPresentation } from './tools/createPresentation.js';
+import { cropImage } from './tools/cropImage.js';
+import { getImageInfo } from './tools/getImageInfo.js';
 import { getPage } from './tools/getPage.js';
 import { getPageThumbnail } from './tools/getPageThumbnail.js';
 import { getPresentation } from './tools/getPresentation.js';
@@ -62,6 +64,11 @@ const register = <T>(server: McpServer, session: GoogleSession, tool: ToolModule
   );
 };
 
+const registerImageTools = (server: McpServer, session: GoogleSession): void => {
+  register(server, session, getImageInfo);
+  register(server, session, cropImage);
+};
+
 const registerLayoutTools = (server: McpServer, session: GoogleSession): void => {
   register(server, session, copyPresentation);
   register(server, session, listLayouts);
@@ -88,4 +95,5 @@ export const setupToolHandlers = (server: McpServer, session: GoogleSession): vo
   register(server, session, setTextStyle);
   register(server, session, setElementGeometry);
   registerLayoutTools(server, session);
+  registerImageTools(server, session);
 };
