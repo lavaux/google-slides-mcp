@@ -2,22 +2,22 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { resolveGoogleCredential } from './auth/resolveCredential.js';
-import { buildClients } from './google/clients.js';
+import { createGoogleSession, type GoogleSession } from './google/session.js';
 import { setupToolHandlers } from './serverHandlers.js';
-import type { GoogleCredential } from './auth/credential.js';
 
-const buildServer = (credential: GoogleCredential): McpServer => {
+const buildServer = (session: GoogleSession): McpServer => {
   const server = new McpServer({
     name: 'google-slides-mcp',
     version: '0.1.0',
   });
-  setupToolHandlers(server, buildClients(credential));
+  setupToolHandlers(server, session);
   return server;
 };
 
 const start = async (): Promise<void> => {
-  const credential = await resolveGoogleCredential();
-  const handle = serveStdio(() => buildServer(credential));
+  // One session per process, so a renewed credential reaches every server instance.
+  const session = createGoogleSession(await resolveGoogleCredential());
+  const handle = serveStdio(() => buildServer(session));
   const shutdown = (): void => {
     handle
       .close()

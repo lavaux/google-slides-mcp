@@ -13,10 +13,10 @@ import { setElementText } from './tools/setElementText.js';
 import { setShapeProperties } from './tools/setShapeProperties.js';
 import { setTextStyle } from './tools/setTextStyle.js';
 import { summarizePresentation } from './tools/summarizePresentation.js';
-import { handleGoogleApiError } from './utils/errorHandler.js';
+import { credentialFailure, handleCredentialFailure, handleGoogleApiError } from './utils/errorHandler.js';
 import { isToolContent, type ToolContent, type ToolModule } from './utils/tool.js';
-import type { GoogleClients } from './google/clients.js';
-import type { McpServer } from '@modelcontextprotocol/server';
+import type { GoogleSession } from './google/session.js';
+import type { McpServer, ProtocolError } from '@modelcontextprotocol/server';
 
 const JSON_INDENT = 2;
 
@@ -24,42 +24,52 @@ const jsonText = (data: unknown): ToolContent => ({
   content: [{ type: 'text', text: JSON.stringify(data, null, JSON_INDENT) }],
 });
 
-const invoke = async <T>(clients: GoogleClients, tool: ToolModule<T>, args: T): Promise<ToolContent> => {
+const toolError = async (session: GoogleSession, error: unknown, toolName: string): Promise<ProtocolError> => {
+  const failure = credentialFailure(error);
+  if (failure === undefined) {
+    return handleGoogleApiError(error, toolName);
+  }
+  // A dead credential cannot be fixed by retrying. Start consent and tell the
+  // caller to have the user finish it, instead of surfacing `invalid_grant`.
+  return handleCredentialFailure(failure, await session.reauthorize(failure), toolName);
+};
+
+const invoke = async <T>(session: GoogleSession, tool: ToolModule<T>, args: T): Promise<ToolContent> => {
   try {
-    const payload = await tool.handler(clients, args);
+    const payload = await tool.handler(session.clients(), args);
     // A handler that already built content blocks (an image, say) passes
     // through untouched; every other payload is JSON-wrapped.
     return isToolContent(payload) ? payload : jsonText(payload);
   } catch (error: unknown) {
-    throw handleGoogleApiError(error, tool.name);
+    throw await toolError(session, error, tool.name);
   }
 };
 
-const register = <T>(server: McpServer, clients: GoogleClients, tool: ToolModule<T>): void => {
+const register = <T>(server: McpServer, session: GoogleSession, tool: ToolModule<T>): void => {
   server.registerTool(
     tool.name,
     {
       description: tool.descriptor.description,
       inputSchema: tool.schema,
     },
-    async (args) => invoke(clients, tool, args)
+    async (args) => invoke(session, tool, args)
   );
 };
 
-export const setupToolHandlers = (server: McpServer, clients: GoogleClients): void => {
-  register(server, clients, createPresentation);
-  register(server, clients, getPresentation);
-  register(server, clients, batchUpdatePresentation);
-  register(server, clients, getPage);
-  register(server, clients, summarizePresentation);
-  register(server, clients, insertImage);
-  register(server, clients, replaceImage);
-  register(server, clients, getPageThumbnail);
-  register(server, clients, addSlide);
-  register(server, clients, setElementText);
-  register(server, clients, replaceAllText);
-  register(server, clients, listPageElements);
-  register(server, clients, setShapeProperties);
-  register(server, clients, setTextStyle);
-  register(server, clients, setElementGeometry);
+export const setupToolHandlers = (server: McpServer, session: GoogleSession): void => {
+  register(server, session, createPresentation);
+  register(server, session, getPresentation);
+  register(server, session, batchUpdatePresentation);
+  register(server, session, getPage);
+  register(server, session, summarizePresentation);
+  register(server, session, insertImage);
+  register(server, session, replaceImage);
+  register(server, session, getPageThumbnail);
+  register(server, session, addSlide);
+  register(server, session, setElementText);
+  register(server, session, replaceAllText);
+  register(server, session, listPageElements);
+  register(server, session, setShapeProperties);
+  register(server, session, setTextStyle);
+  register(server, session, setElementGeometry);
 };

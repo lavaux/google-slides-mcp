@@ -65,6 +65,18 @@ The process detects this and runs consent once on the next start. Add the new sc
 
 A refresh token supplied through `GOOGLE_REFRESH_TOKEN` is never checked this way, because its scopes are unknowable to this process. If you use env and the image tools return a permission error, mint a token that carries the new scope.
 
+## Expired or revoked authorization
+
+Google invalidates a refresh token when it is revoked, unused for six months, or older than seven days while the OAuth app is in Testing. Tool calls then fail with `invalid_grant`.
+
+The process does not need a restart. On the first failing call it opens a loopback consent page and returns an error that names the page URL. The calling agent asks the user to open that URL and finish Google consent. The process stores the new credential and uses it for the next call. Concurrent failing calls share one consent page.
+
+If Google rejects the OAuth client itself, the page is the setup form. Paste a valid Desktop client id and client secret there.
+
+A renewed token is written to the token store. If `GOOGLE_REFRESH_TOKEN` is set, it overrides the store on the next start, so unset it.
+
+To stop the seven-day expiry, publish the OAuth app under Audience instead of leaving it in Testing.
+
 ## First start
 
 The process opens a loopback page.

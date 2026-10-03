@@ -231,7 +231,17 @@ const logCloseError = (error: unknown): void => {
   console.error('Could not close the consent server.', error);
 };
 
-export const runConsent = async (seed: PartialGoogleCredential): Promise<GoogleCredential> => {
+export type PendingConsent = {
+  /** The loopback page that leads to Google consent. */
+  url: string;
+  credential: Promise<GoogleCredential>;
+};
+
+/**
+ * Opens the consent page and returns at once. A caller that cannot block, such
+ * as a tool call, hands `url` to the user and lets `credential` settle later.
+ */
+export const startConsent = async (seed: PartialGoogleCredential): Promise<PendingConsent> => {
   const listener = await listenLoopback();
   const wait = deferred<GoogleCredential>();
   let session = seedSession(seed);
@@ -249,6 +259,10 @@ export const runConsent = async (seed: PartialGoogleCredential): Promise<GoogleC
   };
   attachConsentHandler(listener, run);
   const startPath = session === undefined ? '/setup' : '/start';
-  openConsentPage(`${listener.origin}${startPath}`);
-  return wait.promise;
+  const url = `${listener.origin}${startPath}`;
+  openConsentPage(url);
+  return { url, credential: wait.promise };
 };
+
+export const runConsent = async (seed: PartialGoogleCredential): Promise<GoogleCredential> =>
+  (await startConsent(seed)).credential;
