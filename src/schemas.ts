@@ -30,9 +30,9 @@ export const SummarizePresentationArgsSchema = z.object({
 });
 export type SummarizePresentationArgs = z.infer<typeof SummarizePresentationArgsSchema>;
 
-const IMAGE_SOURCE_FIELDS = ['imageUrl', 'imagePath', 'imageBase64', 'driveFileId'] as const;
+export const IMAGE_SOURCE_FIELDS = ['imageUrl', 'imagePath', 'imageBase64', 'driveFileId'] as const;
 
-const ImageSourceShape = {
+export const ImageSourceShape = {
   imageUrl: z.string().min(1).optional(),
   imagePath: z.string().min(1).optional(),
   imageBase64: z.string().min(1).optional(),
@@ -87,23 +87,23 @@ export const GetPageThumbnailArgsSchema = z.object({
 });
 export type GetPageThumbnailArgs = z.infer<typeof GetPageThumbnailArgsSchema>;
 
+export const PredefinedLayoutField = z.enum([
+  'BLANK',
+  'CAPTION_ONLY',
+  'TITLE',
+  'TITLE_AND_BODY',
+  'TITLE_AND_TWO_COLUMNS',
+  'TITLE_ONLY',
+  'SECTION_HEADER',
+  'SECTION_TITLE_AND_DESCRIPTION',
+  'ONE_COLUMN_TEXT',
+  'MAIN_POINT',
+  'BIG_NUMBER',
+]);
+
 export const AddSlideArgsSchema = z.object({
   presentationId: z.string().min(1, { error: '"presentationId" (string) is required.' }),
-  layout: z
-    .enum([
-      'BLANK',
-      'CAPTION_ONLY',
-      'TITLE',
-      'TITLE_AND_BODY',
-      'TITLE_AND_TWO_COLUMNS',
-      'TITLE_ONLY',
-      'SECTION_HEADER',
-      'SECTION_TITLE_AND_DESCRIPTION',
-      'ONE_COLUMN_TEXT',
-      'MAIN_POINT',
-      'BIG_NUMBER',
-    ])
-    .optional(),
+  layout: PredefinedLayoutField.optional(),
   layoutObjectId: z.string().min(1).optional(),
   insertionIndex: z.number().int().nonnegative().optional(),
   title: z.string().optional(),
@@ -136,7 +136,7 @@ const TargetShape = {
 };
 
 /** Hex, a theme colour name, or NONE. Parsed by src/slides/style.ts, which names the accepted forms. */
-const ColorField = z.string().min(1);
+export const ColorField = z.string().min(1);
 
 const AutofitField = z.enum(['NONE', 'TEXT_AUTOFIT', 'SHAPE_AUTOFIT']).optional();
 
@@ -217,3 +217,14 @@ export const ReplaceAllTextArgsSchema = z.object({
   pageObjectIds: z.array(z.string().min(1)).optional(),
 });
 export type ReplaceAllTextArgs = z.infer<typeof ReplaceAllTextArgsSchema>;
+
+export const CopyPresentationArgsSchema = z.object({
+  presentationId: z.string().min(1, { error: '"presentationId" (string) is required.' }),
+  name: z.string().min(1).optional(),
+});
+export type CopyPresentationArgs = z.infer<typeof CopyPresentationArgsSchema>;
+
+export const ListLayoutsArgsSchema = z.object({
+  presentationId: z.string().min(1, { error: '"presentationId" (string) is required.' }),
+});
+export type ListLayoutsArgs = z.infer<typeof ListLayoutsArgsSchema>;

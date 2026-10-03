@@ -1,5 +1,5 @@
 import { SetElementGeometryArgsSchema, type SetElementGeometryArgs } from '../schemas.js';
-import { ELEMENT_TREE_FIELDS, requireLocated, type Located } from '../slides/elements.js';
+import { ELEMENT_TREE_FIELDS, refuseGroupChild, requireLocated, type Located } from '../slides/elements.js';
 import {
   axisScales,
   pointsToEmu,
@@ -32,20 +32,6 @@ const intrinsicSize = (located: Located): Size => ({
   height: readEmu(located.element.size?.height) ?? 0,
 });
 
-/**
- * A group child's transform is relative to its group, so an ABSOLUTE write would
- * be composed with the group's own transform and land the element somewhere
- * unrelated to what was asked.
- */
-const refuseGroupChild = (located: Located, objectId: string): void => {
-  if (located.ancestors.length === 0) {
-    return;
-  }
-  throw new Error(
-    `Object id "${objectId}" is inside group "${located.ancestors.at(-1)}". A group child's position is relative to its group. Target the group itself, or ungroup first.`
-  );
-};
-
 const refuseDegenerate = (located: Located, intrinsic: Size, target: TargetBox): void => {
   const axis = resizeBlocker(intrinsic, axisScales(located.element.transform ?? {}), target);
   if (axis === undefined) {
@@ -76,7 +62,7 @@ const handler = async ({ slides }: GoogleClients, args: SetElementGeometryArgs):
     fields: ELEMENT_TREE_FIELDS,
   });
   const located = requireLocated(presentation.data, args.objectId);
-  refuseGroupChild(located, args.objectId);
+  refuseGroupChild(located);
   const intrinsic = intrinsicSize(located);
   refuseDegenerate(located, intrinsic, target);
   const transform = resizeTransform(located.element.transform ?? {}, intrinsic, target);

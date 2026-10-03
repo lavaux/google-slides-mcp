@@ -87,3 +87,23 @@ _Avoid_: reporting it to a caller as the element's size
 **Theme colour**:
 One of the twelve palette slots a deck defines, named rather than given as a value.
 _Avoid_: palette colour, accent, brand colour
+
+**Master**:
+The page at the root of a deck's look: theme colours, default background, and the shapes every layout under it shows.
+_Avoid_: template, theme, which name the whole file Google starts a deck from
+
+**Layout**:
+A page under a master that a slide is built on. It decides which placeholders the slide offers and where they sit. A deck's layouts come from its theme. The API cannot create them.
+_Avoid_: template, slide type, layout name when the object id is meant
+
+**Placeholder**:
+A shape on a slide that stands in for one on its layout, matched by type and index, and inherits its position and text style from it.
+_Avoid_: text box, which is a free shape with no parent
+
+**Relayout**:
+Moving a slide onto another layout. The API has no such request, so this server deletes the slide and recreates it in place on the new layout, carrying its placeholder text across.
+_Avoid_: apply layout, change template, which suggest an operation Google does not have
+
+**Backup copy**:
+A full Drive copy of a presentation, taken before edits that cannot be undone, named after the original with the time it was taken.
+_Avoid_: snapshot, version, which Drive's own revision history already means

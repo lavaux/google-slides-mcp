@@ -40,6 +40,15 @@ const rgbFromHex = (hex: string): slides_v1.Schema$RgbColor => {
   };
 };
 
+const toHexChannel = (value: number | null | undefined): string =>
+  Math.round((value ?? 0) * MAX_CHANNEL)
+    .toString(HEX_RADIX)
+    .padStart(LONG_STEP, '0');
+
+/** The inverse of the hex parse, for reporting colours back in the form a caller passes in. */
+export const hexFromRgb = (rgb: slides_v1.Schema$RgbColor | undefined): string =>
+  `#${toHexChannel(rgb?.red)}${toHexChannel(rgb?.green)}${toHexChannel(rgb?.blue)}`.toUpperCase();
+
 /**
  * Google reports every bad colour with one opaque 400, so the accepted forms are
  * named here instead. `NONE` is not a colour: the calling tool branches on it
@@ -158,4 +167,23 @@ export const optionalColorLeaves = (
     );
   }
   return [leaf(path, {})];
+};
+
+/**
+ * The full scheme with the caller's colours swapped in. Google rejects a partial
+ * colour list, so the colours a caller did not name are written back unchanged.
+ */
+export const mergeColorScheme = (
+  current: slides_v1.Schema$ThemeColorPair[],
+  updates: Partial<Record<string, string>>
+): slides_v1.Schema$ThemeColorPair[] => {
+  const known = new Set(current.map((pair) => pair.type ?? ''));
+  const missing = Object.keys(updates).filter((type) => !known.has(type));
+  if (missing.length > 0) {
+    throw new Error(`This master's colour scheme has no ${missing.join(', ')}. It defines ${[...known].join(', ')}.`);
+  }
+  return current.map((pair) => {
+    const hex = updates[pair.type ?? ''];
+    return hex === undefined ? pair : { type: pair.type, color: rgbFromHex(hex) };
+  });
 };

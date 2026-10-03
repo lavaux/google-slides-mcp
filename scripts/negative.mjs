@@ -5,14 +5,31 @@
 import assert from 'node:assert/strict';
 import { validateImageBytes } from '../build/images/validate.js';
 import {
+  ArrangeElementsArgsSchema,
+  ManageSlidesArgsSchema,
+  SetPageBackgroundArgsSchema,
+  SetThemeColorsArgsSchema,
+} from '../build/layoutSchemas.js';
+import {
   ListPageElementsArgsSchema,
   SetElementGeometryArgsSchema,
   SetElementTextArgsSchema,
   SetShapePropertiesArgsSchema,
   SetTextStyleArgsSchema,
 } from '../build/schemas.js';
+import { alignDeltas, boundingBox, distributeDeltas, unionBox } from '../build/slides/arrange.js';
 import { axisScales, points, pointsToEmu, resizeBlocker, resizeTransform } from '../build/slides/geometry.js';
-import { autofitRequests, buildUpdate, leaf, optionalColorLeaves, parseColor } from '../build/slides/style.js';
+import { mapPlaceholders, sourcePlaceholders, textRequests } from '../build/slides/relayout.js';
+import {
+  autofitRequests,
+  buildUpdate,
+  hexFromRgb,
+  leaf,
+  mergeColorScheme,
+  optionalColorLeaves,
+  parseColor,
+} from '../build/slides/style.js';
+import { backupName } from '../build/tools/copyPresentation.js';
 
 const png = (width, height) => {
   const b = Buffer.alloc(64);
@@ -71,6 +88,95 @@ const cases = [
     'blank objectId',
     () => parse(SetShapePropertiesArgsSchema, { presentationId: 'p', objectId: '' }),
     '"objectId" (string) is required.',
+  ],
+
+  [
+    'move without an index',
+    () => parse(ManageSlidesArgsSchema, { presentationId: 'p', action: 'move', slideObjectIds: ['s'] }),
+    '"insertionIndex"',
+  ],
+  [
+    'relayout without a layout',
+    () => parse(ManageSlidesArgsSchema, { presentationId: 'p', action: 'relayout', slideObjectId: 's' }),
+    '"layoutObjectId"',
+  ],
+  [
+    'delete without slides',
+    () => parse(ManageSlidesArgsSchema, { presentationId: 'p', action: 'delete' }),
+    '"slideObjectIds"',
+  ],
+  ['unknown slide action', () => parse(ManageSlidesArgsSchema, { presentationId: 'p', action: 'rename' }), 'option'],
+  [
+    'distribute two elements',
+    () =>
+      parse(ArrangeElementsArgsSchema, {
+        presentationId: 'p',
+        action: 'distribute',
+        axis: 'horizontal',
+        objectIds: ['a', 'b'],
+      }),
+    'at least 3',
+  ],
+  [
+    'align one element to itself',
+    () => parse(ArrangeElementsArgsSchema, { presentationId: 'p', action: 'align', edge: 'left', objectIds: ['a'] }),
+    'relativeTo "page"',
+  ],
+  [
+    'align without an edge',
+    () => parse(ArrangeElementsArgsSchema, { presentationId: 'p', action: 'align', objectIds: ['a', 'b'] }),
+    '"edge"',
+  ],
+  [
+    'group one element',
+    () => parse(ArrangeElementsArgsSchema, { presentationId: 'p', action: 'group', objectIds: ['a'] }),
+    'at least 2',
+  ],
+  [
+    'background with nothing',
+    () => parse(SetPageBackgroundArgsSchema, { presentationId: 'p', pageObjectId: 'g' }),
+    'exactly one background',
+  ],
+  [
+    'background with two fills',
+    () =>
+      parse(SetPageBackgroundArgsSchema, {
+        presentationId: 'p',
+        pageObjectId: 'g',
+        color: '#fff',
+        imageUrl: 'https://x/y.png',
+      }),
+    'got 2',
+  ],
+  [
+    'unknown theme colour key',
+    () => parse(SetThemeColorsArgsSchema, { presentationId: 'p', colors: { ACCENT7: '#000' } }),
+    'Invalid key',
+  ],
+  [
+    'theme colour by name',
+    () => parse(SetThemeColorsArgsSchema, { presentationId: 'p', colors: { ACCENT1: 'BLUE' } }),
+    'hex only',
+  ],
+  ['no theme colours', () => parse(SetThemeColorsArgsSchema, { presentationId: 'p', colors: {} }), 'at least one'],
+  [
+    'scheme lacks a colour',
+    () => mergeColorScheme([{ type: 'DARK1', color: {} }], { ACCENT1: '#000' }),
+    'has no ACCENT1',
+  ],
+  [
+    'relayout refuses a slide with an image',
+    () => sourcePlaceholders({ objectId: 's', pageElements: [{ objectId: 'img', image: {} }] }),
+    '"img" (an image)',
+  ],
+  [
+    'relayout refuses text without a target placeholder',
+    () =>
+      mapPlaceholders(
+        [{ objectId: 'b', type: 'BODY', index: 0, text: {} }],
+        [{ objectId: 't', type: 'TITLE', index: 0 }]
+      ),
+    '"b" (BODY)',
   ],
 ];
 
@@ -195,6 +301,128 @@ const positives = [
       assert.equal(resizeBlocker({ width: 1000, height: 0 }, { x: 1, y: 1 }, { height: 500 }), 'height');
       assert.equal(resizeBlocker({ width: 1000, height: 0 }, { x: 1, y: 1 }, { width: 500 }), undefined);
       assert.equal(resizeBlocker({ width: 1000, height: 1000 }, { x: 0, y: 1 }, { width: 500 }), 'width');
+    },
+  ],
+  [
+    'backup name is the title with a local timestamp',
+    () => assert.equal(backupName('Talk', new Date(2026, 9, 3, 9, 5)), 'Talk (backup 2026-10-03 09:05)'),
+  ],
+  ['hex round trip', () => assert.equal(hexFromRgb(parseColor('#3366CC').rgbColor), '#3366CC')],
+  [
+    'merging a scheme keeps the colours not named',
+    () => {
+      const merged = mergeColorScheme(
+        [
+          { type: 'DARK1', color: { red: 0, green: 0, blue: 0 } },
+          { type: 'ACCENT1', color: { red: 1, green: 0, blue: 0 } },
+        ],
+        { ACCENT1: '#00FF00' }
+      );
+      assert.deepEqual(merged[0], { type: 'DARK1', color: { red: 0, green: 0, blue: 0 } });
+      assert.deepEqual(merged[1], { type: 'ACCENT1', color: { red: 0, green: 1, blue: 0 } });
+    },
+  ],
+  [
+    'a rotated square is bounded by its corners',
+    () => {
+      const angle = Math.PI / 4;
+      const box = boundingBox(
+        { width: 100, height: 100 },
+        {
+          scaleX: Math.cos(angle),
+          shearX: -Math.sin(angle),
+          shearY: Math.sin(angle),
+          scaleY: Math.cos(angle),
+          translateX: 0,
+          translateY: 0,
+          unit: 'EMU',
+        }
+      );
+      near(box.width, 100 * Math.SQRT2, 'width');
+      near(box.x, -100 / Math.SQRT2, 'x');
+      near(box.y, 0, 'y');
+    },
+  ],
+  [
+    'align right lines up the right edges of the selection',
+    () => {
+      const boxes = [
+        { x: 0, y: 0, width: 10, height: 10 },
+        { x: 50, y: 0, width: 30, height: 10 },
+      ];
+      assert.deepEqual(alignDeltas(boxes, unionBox(boxes), 'right'), [
+        { dx: 70, dy: 0 },
+        { dx: 0, dy: 0 },
+      ]);
+    },
+  ],
+  [
+    'distribute leaves the outer boxes and evens the gaps',
+    () => {
+      const boxes = [
+        { x: 100, y: 0, width: 10, height: 5 },
+        { x: 0, y: 0, width: 10, height: 5 },
+        { x: 20, y: 0, width: 20, height: 5 },
+      ];
+      const deltas = distributeDeltas(boxes, 'horizontal');
+      assert.equal(deltas[0].dx, 0);
+      assert.equal(deltas[1].dx, 0);
+      near(boxes[2].x + deltas[2].dx, 45, 'middle box x');
+    },
+  ],
+  [
+    'CENTERED_TITLE text lands in a TITLE, columns stay in order',
+    () => {
+      const text = {};
+      const mapped = mapPlaceholders(
+        [
+          { objectId: 'ct', type: 'CENTERED_TITLE', index: 0, text },
+          { objectId: 'b2', type: 'BODY', index: 2, text },
+          { objectId: 'b1', type: 'BODY', index: 1, text },
+        ],
+        [
+          { objectId: 'L_title', type: 'TITLE', index: 0 },
+          { objectId: 'L_body1', type: 'BODY', index: 1 },
+          { objectId: 'L_body2', type: 'BODY', index: 2 },
+        ]
+      );
+      assert.deepEqual(
+        mapped.map((item) => [item.sourceObjectId, item.layoutPlaceholderObjectId]),
+        [
+          ['ct', 'L_title'],
+          ['b1', 'L_body1'],
+          ['b2', 'L_body2'],
+        ]
+      );
+    },
+  ],
+  [
+    'relaid text keeps styles, nests bullets with tabs, drops the final newline',
+    () => {
+      const requests = textRequests('n', {
+        textElements: [
+          {
+            startIndex: 0,
+            endIndex: 4,
+            paragraphMarker: { style: { alignment: 'START' }, bullet: { nestingLevel: 0, glyph: '●' } },
+          },
+          { startIndex: 0, endIndex: 4, textRun: { content: 'one\n', style: { bold: true } } },
+          { startIndex: 4, endIndex: 8, paragraphMarker: { style: {}, bullet: { nestingLevel: 1, glyph: '○' } } },
+          { startIndex: 4, endIndex: 8, textRun: { content: 'two\n', style: {} } },
+        ],
+      });
+      assert.deepEqual(requests[0], { insertText: { objectId: 'n', text: 'one\n\ttwo', insertionIndex: 0 } });
+      const bold = requests.find((r) => r.updateTextStyle);
+      assert.deepEqual(bold.updateTextStyle.textRange, { type: 'FIXED_RANGE', startIndex: 0, endIndex: 4 });
+      assert.equal(bold.updateTextStyle.fields, 'bold');
+      const bullets = requests.filter((r) => r.createParagraphBullets);
+      assert.equal(bullets.length, 1, 'neighbouring bullets merge into one list');
+      assert.deepEqual(bullets[0].createParagraphBullets.textRange, {
+        type: 'FIXED_RANGE',
+        startIndex: 0,
+        endIndex: 8,
+      });
+      assert.equal(requests.at(-1), bullets[0], 'bullets go last');
     },
   ],
 ];

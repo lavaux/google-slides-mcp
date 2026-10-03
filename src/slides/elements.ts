@@ -12,7 +12,22 @@ const KIND_KEYS = ['shape', 'image', 'video', 'line', 'table', 'elementGroup', '
  * The response is projected down before it leaves a handler, so the extra bytes
  * cost latency and nothing else.
  */
-export const ELEMENT_TREE_FIELDS = 'pageSize,slides(objectId,pageElements)';
+export const ELEMENT_TREE_FIELDS =
+  'pageSize,slides(objectId,pageElements),layouts(objectId,pageElements),masters(objectId,pageElements)';
+
+export type PageType = 'slide' | 'layout' | 'master';
+
+export type TypedPage = { page: slides_v1.Schema$Page; pageType: PageType };
+
+/**
+ * Every page that can hold elements, slides first. Layout and master shapes take
+ * the same edit requests as slide shapes, so the lookups below search them all.
+ */
+export const allPages = (presentation: slides_v1.Schema$Presentation): TypedPage[] => [
+  ...(presentation.slides ?? []).map((page) => ({ page, pageType: 'slide' as const })),
+  ...(presentation.layouts ?? []).map((page) => ({ page, pageType: 'layout' as const })),
+  ...(presentation.masters ?? []).map((page) => ({ page, pageType: 'master' as const })),
+];
 
 export const groupChildren = (element: Element): Element[] => element.elementGroup?.children ?? [];
 
@@ -30,15 +45,17 @@ export type Located = {
   element: Element;
   kind: string;
   pageObjectId: string;
-  /** Enclosing group ids, outermost first. Empty when the element sits on the slide. */
+  pageType: PageType;
+  /** Enclosing group ids, outermost first. Empty when the element sits on the page. */
   ancestors: string[];
 };
 
-type Scope = { pageObjectId: string; ancestors: string[] };
+type Scope = { pageObjectId: string; pageType: PageType; ancestors: string[] };
 
 const descend = (element: Element, objectId: string, scope: Scope): Located[] => {
   const nested = locateIn(groupChildren(element), objectId, {
     pageObjectId: scope.pageObjectId,
+    pageType: scope.pageType,
     ancestors: [...scope.ancestors, element.objectId ?? ''],
   });
   return nested === undefined ? [] : [nested];
@@ -52,12 +69,13 @@ const locateIn = (elements: Element[], objectId: string, scope: Scope): Located 
   return elements.flatMap((element) => descend(element, objectId, scope)).at(0);
 };
 
-/** Finds an element at any group depth, which a one-level search cannot do. */
+/** Finds an element at any group depth and on any slide, layout or master. */
 export const locateElement = (presentation: slides_v1.Schema$Presentation, objectId: string): Located | undefined =>
-  (presentation.slides ?? [])
-    .flatMap((slide) => {
-      const found = locateIn(slide.pageElements ?? [], objectId, {
-        pageObjectId: slide.objectId ?? '',
+  allPages(presentation)
+    .flatMap(({ page, pageType }) => {
+      const found = locateIn(page.pageElements ?? [], objectId, {
+        pageObjectId: page.objectId ?? '',
+        pageType,
         ancestors: [],
       });
       return found === undefined ? [] : [found];
@@ -75,6 +93,20 @@ export const requireLocated = (presentation: slides_v1.Schema$Presentation, obje
 };
 
 /** updateShapeProperties rejects anything that is not a shape, with no useful message of its own. */
+/**
+ * A group child's transform is relative to its group, so an ABSOLUTE write would
+ * be composed with the group's own transform and land the element somewhere
+ * unrelated to what was asked.
+ */
+export const refuseGroupChild = (located: Located): void => {
+  if (located.ancestors.length === 0) {
+    return;
+  }
+  throw new Error(
+    `Object id "${located.element.objectId}" is inside group "${located.ancestors.at(-1)}". A group child's position is relative to its group. Target the group itself, or ungroup first.`
+  );
+};
+
 export const requireShape = (presentation: slides_v1.Schema$Presentation, objectId: string): Located => {
   const located = requireLocated(presentation, objectId);
   if (located.kind === 'table') {

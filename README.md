@@ -126,7 +126,7 @@ The process listens on stdio. Stderr prints `Google Slides MCP server running an
   - **Output:** JSON object representing the page details.
 
 - **`list_page_elements`**: Lists the object ids on each slide. This is how you find the id the styling tools need.
-  - **Input:** `presentationId`, optional `pageObjectId` for one slide, optional `kind` to keep only `shape`, `image`, `video`, `line`, `table`, `group`, `sheetsChart` or `wordArt`.
+  - **Input:** `presentationId`, optional `pageObjectId` for one slide, or for a layout or master id from `list_layouts`, optional `kind` to keep only `shape`, `image`, `video`, `line`, `table`, `group`, `sheetsChart` or `wordArt`.
   - **Output:** `pageSize` and, per slide, each element's `objectId`, `kind`, `x`, `y`, `width`, `height` in points, its `shapeType` and `placeholder` when it has them, `rows` and `columns` for tables, and an 80-character text preview. Group members are listed too, each carrying the `groupObjectId` of the group it belongs to.
 
 - **`insert_image`**: Inserts an image onto a slide.
@@ -185,6 +185,42 @@ The process listens on stdio. Stderr prints `Google Slides MCP server running an
       - `slideId`: Object ID of the slide
       - `content`: All text extracted from the slide
       - `notes`: Speaker notes (if requested and available)
+
+- **`copy_presentation`**: Makes a full Drive copy of a presentation, for example as a backup before large edits.
+  - **Input:** `presentationId`, optional `name`. Without a name the copy is called `<title> (backup YYYY-MM-DD HH:MM)`, in the server's local time.
+  - **Output:** the copy's `presentationId`, `name` and `url`. The copy sits in the same folder as the original.
+
+- **`list_layouts`**: Lists masters with their theme colours, the layouts under each master with their placeholders, and the layout each slide uses.
+  - **Input:** `presentationId`.
+  - **Output:** `masters` (each with `objectId`, `displayName`, `themeColors` and `layouts`, where each layout has `objectId`, `name`, `displayName` and `placeholders`) and `slides` (each with `objectId`, `slideNumber`, `layoutObjectId`).
+
+- **`manage_slides`**: Reorders, duplicates, deletes or relays out slides. Pick the operation with `action`.
+  - `move`: `slideObjectIds` and `insertionIndex`. The slides keep their deck order.
+  - `duplicate`: `slideObjectId`, optional `insertionIndex`. Returns the copy's id.
+  - `delete`: `slideObjectIds`. Deleting every slide is refused.
+  - `relayout`: `slideObjectId` plus `layout` (a predefined name) or `layoutObjectId`. See "How layouts work" below.
+
+- **`arrange_elements`**: Arranges elements on one page. Pick the operation with `action`, and pass `objectIds`.
+  - `align`: `edge` (`left`, `center`, `right`, `top`, `middle`, `bottom`) and `relativeTo` (`selection`, the default, or `page`).
+  - `distribute`: `axis` (`horizontal` or `vertical`), 3 or more elements. The outermost two stay in place.
+  - `z_order`: `operation` (`BRING_TO_FRONT`, `BRING_FORWARD`, `SEND_BACKWARD`, `SEND_TO_BACK`).
+  - `group`: 2 or more elements, optional `groupObjectId`. Returns the group id.
+  - `ungroup`: the groups to dissolve.
+
+- **`set_page_background`**: Sets the background of a slide, a layout or a master.
+  - **Input:** `presentationId`, `pageObjectId`, and exactly one of `color` (hex, a theme colour, or `NONE`), an image source as for `insert_image` (stretched to fill), or `inherit: true` (slides and layouts only).
+
+- **`set_theme_colors`**: Changes a master's theme colours.
+  - **Input:** `presentationId`, optional `masterObjectId` (needed only when the deck has several masters), and `colors`, a map from `DARK1`, `LIGHT1`, `DARK2`, `LIGHT2`, `ACCENT1` to `ACCENT6`, `HYPERLINK`, `FOLLOWED_HYPERLINK` to `#RRGGBB`. Colours left out keep their value.
+  - **Output:** the master id and its full colour scheme after the change.
+
+## How layouts work
+
+Every slide is built on a layout, and every layout belongs to a master. `list_layouts` shows the tree. A deck's layouts come from its theme: the API can neither create a layout nor change the page size of an existing deck.
+
+Layout and master shapes are edited with the ordinary tools. Pass a layout or master id to `list_page_elements` to see its elements, then use their ids with `set_shape_properties`, `set_text_style`, `set_element_text` or `set_element_geometry`. A change there shows on every slide that inherits from that page. `set_page_background` and `set_theme_colors` work at the same level.
+
+The Slides API cannot move an existing slide onto another layout, so `manage_slides` `relayout` recreates the slide in place. It keeps the slide's position and ids, and it carries the placeholder text with its styles, bullets and speaker notes. It refuses a slide that holds anything other than placeholders, such as an image, a free text box or a table, because those cannot be carried across. It also refuses when the target layout has no placeholder for some of the text. Relayout and delete cannot be undone, so take a `copy_presentation` first when the deck matters.
 
 ## How shape styling works
 

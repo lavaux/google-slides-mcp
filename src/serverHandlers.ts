@@ -1,17 +1,23 @@
 import { addSlide } from './tools/addSlide.js';
+import { arrangeElements } from './tools/arrangeElements.js';
 import { batchUpdatePresentation } from './tools/batchUpdatePresentation.js';
+import { copyPresentation } from './tools/copyPresentation.js';
 import { createPresentation } from './tools/createPresentation.js';
 import { getPage } from './tools/getPage.js';
 import { getPageThumbnail } from './tools/getPageThumbnail.js';
 import { getPresentation } from './tools/getPresentation.js';
 import { insertImage } from './tools/insertImage.js';
+import { listLayouts } from './tools/listLayouts.js';
 import { listPageElements } from './tools/listPageElements.js';
+import { manageSlides } from './tools/manageSlides.js';
 import { replaceAllText } from './tools/replaceAllText.js';
 import { replaceImage } from './tools/replaceImage.js';
 import { setElementGeometry } from './tools/setElementGeometry.js';
 import { setElementText } from './tools/setElementText.js';
+import { setPageBackground } from './tools/setPageBackground.js';
 import { setShapeProperties } from './tools/setShapeProperties.js';
 import { setTextStyle } from './tools/setTextStyle.js';
+import { setThemeColors } from './tools/setThemeColors.js';
 import { summarizePresentation } from './tools/summarizePresentation.js';
 import { credentialFailure, handleCredentialFailure, handleGoogleApiError } from './utils/errorHandler.js';
 import { isToolContent, type ToolContent, type ToolModule } from './utils/tool.js';
@@ -56,6 +62,15 @@ const register = <T>(server: McpServer, session: GoogleSession, tool: ToolModule
   );
 };
 
+const registerLayoutTools = (server: McpServer, session: GoogleSession): void => {
+  register(server, session, copyPresentation);
+  register(server, session, listLayouts);
+  register(server, session, manageSlides);
+  register(server, session, arrangeElements);
+  register(server, session, setPageBackground);
+  register(server, session, setThemeColors);
+};
+
 export const setupToolHandlers = (server: McpServer, session: GoogleSession): void => {
   register(server, session, createPresentation);
   register(server, session, getPresentation);
@@ -72,4 +87,5 @@ export const setupToolHandlers = (server: McpServer, session: GoogleSession): vo
   register(server, session, setShapeProperties);
   register(server, session, setTextStyle);
   register(server, session, setElementGeometry);
+  registerLayoutTools(server, session);
 };

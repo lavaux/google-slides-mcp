@@ -1,5 +1,5 @@
 import { ListPageElementsArgsSchema, type ListPageElementsArgs } from '../schemas.js';
-import { ELEMENT_TREE_FIELDS, elementKind, groupChildren } from '../slides/elements.js';
+import { allPages, ELEMENT_TREE_FIELDS, elementKind, groupChildren, type TypedPage } from '../slides/elements.js';
 import { readEmu, readPageSize, toPointsRounded, visualSize } from '../slides/geometry.js';
 import type { GoogleClients } from '../google/clients.js';
 import type { ToolModule } from '../utils/tool.js';
@@ -72,22 +72,41 @@ const view = (element: Element, groupObjectId: string | undefined): Record<strin
   ...groupChildren(element).flatMap((child) => view(child, element.objectId ?? undefined)),
 ];
 
-const pageView = (slide: slides_v1.Schema$Page, index: number, kind: string | undefined) => {
-  const elements = (slide.pageElements ?? []).flatMap((element) => view(element, undefined));
+const pageView = ({ page, pageType }: TypedPage, index: number, kind: string | undefined) => {
+  const elements = (page.pageElements ?? []).flatMap((element) => view(element, undefined));
   return {
-    pageObjectId: slide.objectId,
-    slideNumber: index + 1,
+    pageObjectId: page.objectId,
+    ...(pageType === 'slide' ? { slideNumber: index + 1 } : { pageType }),
     elements: kind === undefined ? elements : elements.filter((element) => element.kind === kind),
   };
+};
+
+/**
+ * Slides by default, because that is what a caller usually means. A layout or
+ * master is listed only when asked for by id, so the default output stays short.
+ */
+const selectPages = (presentation: slides_v1.Schema$Presentation, pageObjectId: string | undefined): TypedPage[] => {
+  const pages = allPages(presentation);
+  if (pageObjectId === undefined) {
+    return pages.filter((item) => item.pageType === 'slide');
+  }
+  const selected = pages.filter((item) => item.page.objectId === pageObjectId);
+  if (selected.length === 0) {
+    throw new Error(
+      `No slide, layout or master with object id "${pageObjectId}" was found in this presentation. Run list_layouts to see layout and master ids.`
+    );
+  }
+  return selected;
 };
 
 const handler = async ({ slides }: GoogleClients, args: ListPageElementsArgs): Promise<unknown> => {
   const presentation = (
     await slides.presentations.get({ presentationId: args.presentationId, fields: ELEMENT_TREE_FIELDS })
   ).data;
-  const pages = (presentation.slides ?? [])
-    .map((slide, index) => pageView(slide, index, args.kind))
-    .filter((page) => args.pageObjectId === undefined || page.pageObjectId === args.pageObjectId);
+  const slideIds = (presentation.slides ?? []).map((slide) => slide.objectId);
+  const pages = selectPages(presentation, args.pageObjectId).map((item) =>
+    pageView(item, slideIds.indexOf(item.page.objectId), args.kind)
+  );
   const size = readPageSize(presentation);
   return {
     ...(size === undefined
@@ -103,6 +122,6 @@ export const listPageElements: ToolModule<ListPageElementsArgs> = {
   handler,
   descriptor: {
     description:
-      'List the object ids on each slide with their kind, position and size in points, and a short text preview. This is how you find the object id that set_shape_properties, set_text_style, set_element_geometry and set_element_text need. Group members are listed too, each carrying the id of the group it belongs to. Pass pageObjectId for one slide, or kind to keep only shapes, images, tables, lines or groups.',
+      'List the object ids on each slide with their kind, position and size in points, and a short text preview. This is how you find the object id that set_shape_properties, set_text_style, set_element_geometry and set_element_text need. Group members are listed too, each carrying the id of the group it belongs to. Pass pageObjectId for one slide, or for a layout or master id from list_layouts to see the elements that every slide on it inherits; those ids are accepted by the same editing tools. Pass kind to keep only shapes, images, tables, lines or groups.',
   },
 };

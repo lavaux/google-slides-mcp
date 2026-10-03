@@ -13,17 +13,23 @@ import { join } from 'node:path';
 import { resolveGoogleCredential } from '../build/auth/resolveCredential.js';
 import { buildClients } from '../build/google/clients.js';
 import { addSlide } from '../build/tools/addSlide.js';
+import { arrangeElements } from '../build/tools/arrangeElements.js';
 import { batchUpdatePresentation } from '../build/tools/batchUpdatePresentation.js';
+import { copyPresentation } from '../build/tools/copyPresentation.js';
 import { createPresentation } from '../build/tools/createPresentation.js';
 import { getPageThumbnail } from '../build/tools/getPageThumbnail.js';
 import { insertImage } from '../build/tools/insertImage.js';
+import { listLayouts } from '../build/tools/listLayouts.js';
 import { listPageElements } from '../build/tools/listPageElements.js';
+import { manageSlides } from '../build/tools/manageSlides.js';
 import { replaceAllText } from '../build/tools/replaceAllText.js';
 import { replaceImage } from '../build/tools/replaceImage.js';
 import { setElementGeometry } from '../build/tools/setElementGeometry.js';
 import { setElementText } from '../build/tools/setElementText.js';
+import { setPageBackground } from '../build/tools/setPageBackground.js';
 import { setShapeProperties } from '../build/tools/setShapeProperties.js';
 import { setTextStyle } from '../build/tools/setTextStyle.js';
+import { setThemeColors } from '../build/tools/setThemeColors.js';
 
 const imagePath = process.argv[2];
 if (!imagePath) {
@@ -256,6 +262,253 @@ await expectFailure('transparent text is refused locally', () =>
 await expectFailure('set_element_geometry on an unknown id names list_page_elements', () =>
   setElementGeometry.handler(clients, { presentationId, objectId: 'no_such_element', x: 10 })
 );
+
+// ---- backup copy -------------------------------------------------------------
+
+await step('copy_presentation (timestamped name, then delete the copy)', async () => {
+  const copy = await copyPresentation.handler(clients, { presentationId });
+  if (!copy.presentationId || copy.presentationId === presentationId)
+    throw new Error(`bad copy id ${copy.presentationId}`);
+  if (!/\(backup \d{4}-\d{2}-\d{2} \d{2}:\d{2}\)$/.test(copy.name)) throw new Error(`unexpected name ${copy.name}`);
+  console.log(`    ${copy.name}`);
+  await clients.drive.files.delete({ fileId: copy.presentationId });
+});
+
+// Set COPY_FOREIGN_DECK to the id of a deck this app did not create, to check
+// whether drive.file plus drive.readonly is enough to copy it.
+if (process.env.COPY_FOREIGN_DECK) {
+  await step('copy_presentation on a deck this app did not create', async () => {
+    const copy = await copyPresentation.handler(clients, { presentationId: process.env.COPY_FOREIGN_DECK });
+    await clients.drive.files.delete({ fileId: copy.presentationId });
+  });
+}
+
+// ---- layouts and masters --------------------------------------------------------
+
+const layouts = await step('list_layouts', async () => {
+  const result = await listLayouts.handler(clients, { presentationId });
+  if (result.masters.length === 0) throw new Error('no masters reported');
+  const all = result.masters.flatMap((master) => master.layouts);
+  console.log(`    ${result.masters.length} master(s), ${all.length} layouts`);
+  return { ...result, all };
+});
+const layoutNamed = (name) => layouts?.all.find((layout) => layout.name === name);
+
+const slideIndex = async (objectId) =>
+  (await clients.slides.presentations.get({ presentationId, fields: 'slides(objectId)' })).data.slides.findIndex(
+    (s) => s.objectId === objectId
+  );
+
+const relaid = await step('manage_slides relayout carries text, style, bullets and notes', async () => {
+  const added = await addSlide.handler(clients, {
+    presentationId,
+    layout: 'TITLE_AND_BODY',
+    title: 'Relayout me',
+    body: 'first point\nsecond point',
+  });
+  const relTitle = added.placeholders.find((p) => p.type === 'TITLE').objectId;
+  const relBody = added.placeholders.find((p) => p.type === 'BODY').objectId;
+  await setTextStyle.handler(clients, { presentationId, objectId: relTitle, bold: true });
+  const notesId = (
+    await clients.slides.presentations.get({
+      presentationId,
+      fields: 'slides(objectId,slideProperties(notesPage(notesProperties)))',
+    })
+  ).data.slides.find((s) => s.objectId === added.slideObjectId).slideProperties.notesPage.notesProperties
+    .speakerNotesObjectId;
+  await batchUpdatePresentation.handler(clients, {
+    presentationId,
+    requests: [
+      {
+        createParagraphBullets: {
+          objectId: relBody,
+          textRange: { type: 'ALL' },
+          bulletPreset: 'BULLET_DISC_CIRCLE_SQUARE',
+        },
+      },
+      { insertText: { objectId: notesId, text: 'speaker notes survive', insertionIndex: 0 } },
+    ],
+  });
+  const before = await slideIndex(added.slideObjectId);
+  const out = await manageSlides.handler(clients, {
+    presentationId,
+    action: 'relayout',
+    slideObjectId: added.slideObjectId,
+    layout: 'TITLE_AND_TWO_COLUMNS',
+  });
+  console.log(`    reusedIds=${out.reusedIds} notesCopied=${out.notesCopied}`);
+  if (!out.notesCopied) throw new Error('notes were not copied');
+  if ((await slideIndex(out.slideObjectId)) !== before) throw new Error('slide moved');
+  const page = (await clients.slides.presentations.pages.get({ presentationId, pageObjectId: out.slideObjectId })).data;
+  if (page.slideProperties.layoutObjectId !== layoutNamed('TITLE_AND_TWO_COLUMNS')?.objectId)
+    throw new Error('layout not applied');
+  const runs = page.pageElements.flatMap((e) => e.shape?.text?.textElements ?? []);
+  const titleRun = runs.find((r) => r.textRun?.content?.startsWith('Relayout me'));
+  if (!titleRun?.textRun.style?.bold) throw new Error('title lost its bold');
+  const bulleted = runs.filter((r) => r.paragraphMarker?.bullet).length;
+  if (bulleted !== 2) throw new Error(`expected 2 bulleted paragraphs, saw ${bulleted}`);
+  const newNotes = page.slideProperties.notesPage.pageElements
+    .flatMap((e) => e.shape?.text?.textElements ?? [])
+    .map((r) => r.textRun?.content ?? '')
+    .join('');
+  if (!newNotes.includes('speaker notes survive')) throw new Error(`notes came back as ${JSON.stringify(newNotes)}`);
+  return out;
+});
+
+await expectFailure('relayout refuses a slide carrying images', () =>
+  manageSlides.handler(clients, {
+    presentationId,
+    action: 'relayout',
+    slideObjectId: slide.slideObjectId,
+    layout: 'TITLE_ONLY',
+  })
+);
+
+if (relaid) {
+  await expectFailure('relayout refuses when the body has nowhere to go', () =>
+    manageSlides.handler(clients, {
+      presentationId,
+      action: 'relayout',
+      slideObjectId: relaid.slideObjectId,
+      layout: 'TITLE_ONLY',
+    })
+  );
+
+  await step('manage_slides duplicate, move, delete', async () => {
+    const count = async () =>
+      (await clients.slides.presentations.get({ presentationId, fields: 'slides(objectId)' })).data.slides.length;
+    const start = await count();
+    const dup = await manageSlides.handler(clients, {
+      presentationId,
+      action: 'duplicate',
+      slideObjectId: relaid.slideObjectId,
+      insertionIndex: 0,
+    });
+    if ((await slideIndex(dup.slideObjectId)) !== 0) throw new Error('duplicate not at index 0');
+    await manageSlides.handler(clients, {
+      presentationId,
+      action: 'move',
+      slideObjectIds: [dup.slideObjectId],
+      insertionIndex: start + 1,
+    });
+    if ((await slideIndex(dup.slideObjectId)) !== start) throw new Error('move did not reach the end');
+    await manageSlides.handler(clients, { presentationId, action: 'delete', slideObjectIds: [dup.slideObjectId] });
+    if ((await count()) !== start) throw new Error('delete did not restore the count');
+  });
+}
+
+// ---- arrangement ---------------------------------------------------------------
+
+const blank = await step('add_slide BLANK for arrangement', () =>
+  addSlide.handler(clients, { presentationId, layout: 'BLANK' })
+);
+if (blank) {
+  const boxIds = ['arr_a', 'arr_b', 'arr_c'];
+  await step('arrange_elements align, distribute, z_order, group, ungroup', async () => {
+    await batchUpdatePresentation.handler(clients, {
+      presentationId,
+      requests: boxIds.map((objectId, i) => ({
+        createShape: {
+          objectId,
+          shapeType: 'RECTANGLE',
+          elementProperties: {
+            pageObjectId: blank.slideObjectId,
+            size: { width: { magnitude: 60 + 20 * i, unit: 'PT' }, height: { magnitude: 40, unit: 'PT' } },
+            transform: {
+              scaleX: 1,
+              scaleY: 1,
+              translateX: [30, 140, 400][i],
+              translateY: [20, 90, 200][i],
+              unit: 'PT',
+            },
+          },
+        },
+      })),
+    });
+    await arrangeElements.handler(clients, { presentationId, action: 'align', objectIds: boxIds, edge: 'top' });
+    const dist = await arrangeElements.handler(clients, {
+      presentationId,
+      action: 'distribute',
+      objectIds: boxIds,
+      axis: 'horizontal',
+    });
+    const seen = (await listPageElements.handler(clients, { presentationId, pageObjectId: blank.slideObjectId }))
+      .pages[0].elements;
+    const els = boxIds.map((id) => seen.find((e) => e.objectId === id));
+    if (new Set(els.map((e) => e.y)).size !== 1) throw new Error(`tops differ: ${els.map((e) => e.y)}`);
+    const gapAB = els[1].x - (els[0].x + els[0].width);
+    const gapBC = els[2].x - (els[1].x + els[1].width);
+    if (Math.abs(gapAB - gapBC) > 0.5) throw new Error(`gaps differ: ${gapAB} vs ${gapBC} (${JSON.stringify(dist)})`);
+    await arrangeElements.handler(clients, {
+      presentationId,
+      action: 'z_order',
+      objectIds: ['arr_a'],
+      operation: 'BRING_TO_FRONT',
+    });
+    const grouped = await arrangeElements.handler(clients, { presentationId, action: 'group', objectIds: boxIds });
+    await arrangeElements.handler(clients, {
+      presentationId,
+      action: 'align',
+      objectIds: [grouped.groupObjectId],
+      edge: 'center',
+      relativeTo: 'page',
+    });
+    await arrangeElements.handler(clients, { presentationId, action: 'ungroup', objectIds: [grouped.groupObjectId] });
+  });
+
+  await expectFailure('arrange_elements refuses a group member', async () => {
+    const grouped = await arrangeElements.handler(clients, {
+      presentationId,
+      action: 'group',
+      objectIds: ['arr_a', 'arr_b'],
+    });
+    try {
+      await arrangeElements.handler(clients, {
+        presentationId,
+        action: 'align',
+        objectIds: ['arr_a', 'arr_c'],
+        edge: 'left',
+      });
+    } finally {
+      await arrangeElements.handler(clients, { presentationId, action: 'ungroup', objectIds: [grouped.groupObjectId] });
+    }
+  });
+
+  await step('set_page_background colour, image, inherit on a slide', async () => {
+    await setPageBackground.handler(clients, { presentationId, pageObjectId: blank.slideObjectId, color: '#203040' });
+    const image = await setPageBackground.handler(clients, {
+      presentationId,
+      pageObjectId: blank.slideObjectId,
+      imagePath,
+    });
+    console.log(`    image urlForm=${image.urlForm}`);
+    await setPageBackground.handler(clients, { presentationId, pageObjectId: blank.slideObjectId, inherit: true });
+  });
+}
+
+const titleAndBody = layoutNamed('TITLE_AND_BODY');
+if (titleAndBody) {
+  await step('set_page_background on a layout', () =>
+    setPageBackground.handler(clients, { presentationId, pageObjectId: titleAndBody.objectId, color: '#FFFDF5' })
+  );
+
+  await step('list_page_elements and set_shape_properties on a layout placeholder', async () => {
+    const listedLayout = await listPageElements.handler(clients, {
+      presentationId,
+      pageObjectId: titleAndBody.objectId,
+    });
+    if (listedLayout.pages[0].pageType !== 'layout') throw new Error('layout page not labelled');
+    const layoutTitle = titleAndBody.placeholders.find((p) => p.type === 'TITLE').objectId;
+    await setShapeProperties.handler(clients, { presentationId, objectId: layoutTitle, backgroundColor: '#EEEEEE' });
+  });
+}
+
+await step('set_theme_colors ACCENT1, read back through list_layouts', async () => {
+  await setThemeColors.handler(clients, { presentationId, colors: { ACCENT1: '#FF6600' } });
+  const after = await listLayouts.handler(clients, { presentationId });
+  if (after.masters[0].themeColors.ACCENT1 !== '#FF6600')
+    throw new Error(`ACCENT1 is ${after.masters[0].themeColors.ACCENT1}`);
+});
 
 const thumb = await step('get_page_thumbnail', () =>
   getPageThumbnail.handler(clients, { presentationId, pageObjectId: slide.slideObjectId })

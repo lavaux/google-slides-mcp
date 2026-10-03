@@ -1,13 +1,8 @@
 import { AddSlideArgsSchema, type AddSlideArgs } from '../schemas.js';
+import { shortId } from '../slides/ids.js';
 import type { GoogleClients } from '../google/clients.js';
 import type { ToolModule } from '../utils/tool.js';
 import type { slides_v1 } from 'googleapis';
-
-const ID_RANDOM_BASE = 36;
-const ID_RANDOM_LENGTH = 8;
-
-const shortId = (prefix: string): string =>
-  `${prefix}_${Date.now().toString(ID_RANDOM_BASE)}${Math.random().toString(ID_RANDOM_BASE).slice(2, ID_RANDOM_LENGTH)}`;
 
 type PlaceholderFill = {
   type: string;
